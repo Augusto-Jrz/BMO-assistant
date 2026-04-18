@@ -343,3 +343,244 @@ while running:
             end_conversation()
 
             print("BMO: conversation timed out")
+            
+                # IDLE LOOK-AROUND SYSTEM
+    # only runs when BMO is not talking and not in conversation mode
+    if not talking and not active_conversation and current_time - last_active_time > 3600:
+
+        if current_time - last_look > look_interval:
+
+            # cycle eye movement: center → left → right → center
+            if look_direction == 0:
+                look_direction = -1
+
+            elif look_direction == -1:
+                look_direction = 1
+
+            else:
+                look_direction = 0
+                look_count += 1
+
+            last_look = current_time
+
+
+    # smoothly move eyes toward target position
+    target_eye_offset = look_direction * WIDTH * .1
+
+    if eye_offset < target_eye_offset:
+        eye_offset += 5
+
+    elif eye_offset > target_eye_offset:
+        eye_offset -= 5
+
+
+    # after several idle eye movements, BMO falls asleep
+    if look_count >= 4 and not talking and not active_conversation:
+        state = "sleep"
+
+
+    # SLEEP BREATHING ANIMATION
+    # mouth expands/contracts slowly while sleeping
+    if state == "sleep":
+
+        breath_amount += breath_speed * breath_direction
+
+        if breath_amount >= breath_max:
+            breath_amount = breath_max
+            breath_direction = -1
+
+        if breath_amount <= breath_min:
+            breath_amount = breath_min
+            breath_direction = 1
+
+    else:
+        breath_amount = 0
+
+
+    # VOICE COMMAND HANDLER
+    # reads latest recognized speech from voice.py
+    command = voice.last_command
+
+
+    if command:
+
+        command = command.lower().strip()
+
+        print("Heard:", command)
+
+        # clear stored command after reading
+        voice.last_command = None
+
+
+        # GLOBAL SLEEP COMMAND (works anytime)
+        if is_wake_word(command) and "sleep" in strip_wake_word(command):
+
+            state = "sleep"
+            talking = False
+
+            end_conversation()
+
+            reset_eyes()
+
+
+        # STOP TALKING COMMAND
+        elif "stop talking" in command:
+
+            talking = False
+            cancelled = True
+
+            bmo_response = ""
+
+            state = "idle"
+            look_count = 0
+
+            last_active_time = current_time
+
+            reset_eyes()
+
+            # remain in conversation mode after interrupt
+            last_conversation_time = current_time
+
+
+        # DIRECT SLEEP COMMAND (outside conversation mode)
+        elif "go to sleep" in command or ("sleep" in command and not active_conversation):
+
+            state = "sleep"
+
+            talking = False
+
+            end_conversation()
+
+            reset_eyes()
+
+
+        # ACTIVE CONVERSATION MODE
+        # wake word no longer required here
+        elif active_conversation:
+
+            if waiting_for_command:
+                waiting_for_command = False
+
+
+            # WAKE-UP COMMAND
+            if "wake up" in command or "arise" in command:
+
+                state = "idle"
+
+                look_count = 0
+
+                last_active_time = current_time
+
+                reset_eyes()
+
+
+            else:
+                # send command directly to AI
+                state = "idle"
+
+                look_count = 0
+
+                last_active_time = current_time
+
+                last_conversation_time = current_time
+
+                reset_eyes()
+
+                threading.Thread(
+                    target=run_ai,
+                    args=(command,),
+                    daemon=True
+                ).start()
+
+
+        # NOT IN CONVERSATION MODE → NEED WAKE WORD
+        elif is_wake_word(command):
+
+            print("RAW:", repr(command))
+
+            remainder = strip_wake_word(command)
+
+
+            # activate conversation mode
+            active_conversation = True
+
+            last_conversation_time = current_time
+
+            state = "idle"
+
+            look_count = 0
+
+            last_active_time = current_time
+
+            reset_eyes()
+
+
+            # case: user said only "hey bmo"
+            if remainder == "":
+
+                waiting_for_command = True
+
+                threading.Thread(
+                    target=acknowledge,
+                    daemon=True
+                ).start()
+
+
+            # case: user said command together with wake word
+            else:
+
+                # WAKE-UP COMMAND
+                if "wake up" in remainder or "arise" in remainder:
+
+                    state = "idle"
+
+                    look_count = 0
+
+                    last_active_time = current_time
+
+                    reset_eyes()
+
+
+                # FORCE TALKING ANIMATION COMMAND
+                elif "talk" in remainder:
+
+                    talking = True
+
+                    look_count = 0
+
+                    reset_eyes()
+
+
+                # NORMAL AI REQUEST
+                else:
+
+                    threading.Thread(
+                        target=run_ai,
+                        args=(remainder,),
+                        daemon=True
+                    ).start()
+
+
+    # DRAW FRAME
+
+    # clear background
+    screen.fill(GREEN)
+
+
+    # draw BMO face with correct animation state
+    face.draw_face(
+        screen,
+        mouth_state if talking else state,
+        anim,
+        eye_offset,
+        breath_amount
+    )
+
+
+    # update screen
+    pygame.display.flip()
+
+
+# cleanup when program exits
+pygame.quit()
+sys.exit()
